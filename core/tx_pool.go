@@ -18,6 +18,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -898,8 +899,14 @@ func (pool *TxPool) AddLocals(txs []*types.Transaction) []error {
 // AddLocal enqueues a single local transaction into the pool if it is valid. This is
 // a convenience wrapper aroundd AddLocals.
 func (pool *TxPool) AddLocal(tx *types.Transaction) error {
-	errs := pool.AddLocals([]*types.Transaction{tx})
-	return errs[0]
+	//sylarChange
+	//errs := pool.AddLocals([]*types.Transaction{tx})
+	//return errs[0]
+	//add
+	//应该是api-backend调用geth api 发送交易会新增到本地
+	fmt.Println("sylarChange : send transaction now......")
+	pool.txFeed.Send(NewTxsEvent{[]*types.Transaction{tx}})
+	return nil
 }
 
 // AddRemotes enqueues a batch of transactions into the pool if they are valid. If the

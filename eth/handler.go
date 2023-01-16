@@ -749,7 +749,10 @@ func (h *handler) txBroadcastLoop() {
 	for {
 		select {
 		case event := <-h.txsCh:
-			h.BroadcastTransactions(event.Txs)
+			//sylarChange
+			//不发送新的tx给peer,节省流量
+			//h.BroadcastTransactions(event.Txs)
+			log.Trace("txBroadcastLoop", "len", len(event.Txs))
 		case <-h.txsSub.Err():
 			return
 		}

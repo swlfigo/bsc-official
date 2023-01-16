@@ -114,7 +114,10 @@ func (cs *chainSyncer) loop() {
 
 	for {
 		if op := cs.nextSyncOp(); op != nil {
-			cs.startSync(op)
+			//sylarChange
+			//nextSyncOP中会计算本地LocalHead的区块高度与peer中区块高度(peer中获取TD最高的)相差
+			//不同步peer的区块信息
+			//cs.startSync(op)
 		}
 		select {
 		case <-cs.peerEventCh:

@@ -19,7 +19,6 @@ package eth
 import (
 	"fmt"
 	"math/big"
-	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -53,7 +52,10 @@ func (h *ethHandler) PeerInfo(id enode.ID) interface{} {
 // AcceptTxs retrieves whether transaction processing is enabled on the node
 // or if inbound transactions should simply be dropped.
 func (h *ethHandler) AcceptTxs() bool {
-	return atomic.LoadUint32(&h.acceptTxs) == 1
+	//return atomic.LoadUint32(&h.acceptTxs) == 1
+	//sylarChange
+	//Block同步过程中不会接受TX,由于不接受Block同步,则可以直接返回True即可
+	return true
 }
 
 // Handle is invoked from a peer's message handler when it receives a new remote

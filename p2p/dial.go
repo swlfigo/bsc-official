@@ -85,13 +85,12 @@ var (
 // dialer creates outbound connections and submits them into Server.
 // Two types of peer connections can be created:
 //
-//  - static dials are pre-configured connections. The dialer attempts
-//    keep these nodes connected at all times.
+//   - static dials are pre-configured connections. The dialer attempts
+//     keep these nodes connected at all times.
 //
-//  - dynamic dials are created from node discovery results. The dialer
-//    continuously reads candidate nodes from its input iterator and attempts
-//    to create peer connections to nodes arriving through the iterator.
-//
+//   - dynamic dials are created from node discovery results. The dialer
+//     continuously reads candidate nodes from its input iterator and attempts
+//     to create peer connections to nodes arriving through the iterator.
 type dialScheduler struct {
 	dialConfig
 	setupFunc   dialSetupFunc
@@ -179,6 +178,8 @@ func newDialScheduler(config dialConfig, it enode.Iterator, setupFunc dialSetupF
 	d.ctx, d.cancel = context.WithCancel(context.Background())
 	d.wg.Add(2)
 	gopool.Submit(func() {
+		//sylarChange
+		//从节点查找中获取节点
 		d.readNodes(it)
 	})
 	gopool.Submit(
