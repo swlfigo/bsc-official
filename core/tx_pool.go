@@ -18,8 +18,6 @@ package core
 
 import (
 	"errors"
-	"fmt"
-	"math"
 	"math/big"
 	"sort"
 	"sync"
@@ -256,9 +254,11 @@ type TxPool struct {
 	eip2718  bool // Fork indicator whether we are using EIP-2718 type transactions.
 	eip1559  bool // Fork indicator whether we are using EIP-1559 type transactions.
 
-	currentState  *state.StateDB // Current state in the blockchain head
-	pendingNonces *txNoncer      // Pending state tracking virtual nonces
-	currentMaxGas uint64         // Current gas limit for transaction caps
+	currentState *state.StateDB // Current state in the blockchain head
+	//sylarChange
+	pendingNonces *txNonceCache //使用缓存
+	//pendingNonces *txNoncer      // Pending state tracking virtual nonces
+	currentMaxGas uint64 // Current gas limit for transaction caps
 
 	locals  *accountSet // Set of local transaction to exempt from eviction rules
 	journal *txJournal  // Journal of local transaction to back up to disk
@@ -280,6 +280,10 @@ type TxPool struct {
 	initDoneCh      chan struct{}  // is closed once the pool is initialized (for tests)
 
 	changesSinceReorg int // A counter for how many drops we've performed in-between reorg.
+
+	//sylarChange //begin
+	directTxs chan []*types.Transaction
+	//sylarChange //end
 }
 
 type txpoolResetRequest struct {
@@ -317,6 +321,8 @@ func NewTxPool(config TxPoolConfig, chainconfig *params.ChainConfig, chain block
 		pool.locals.add(addr)
 	}
 	pool.priced = newTxPricedList(pool.all)
+	//sylarChange
+	pool.pendingNonces = newTxNonceCache(pool.signer, chain.CurrentBlock())
 	pool.reset(nil, chain.CurrentBlock().Header())
 
 	// Start the reorg loop early so it can handle requests generated during journal loading.
@@ -672,15 +678,25 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	if !local && tx.GasTipCapIntCmp(pool.gasPrice) < 0 {
 		return ErrUnderpriced
 	}
+	//sylarChange
+	pool.pendingNonces.setNonceFromCache(from, tx.Nonce())
 	// Ensure the transaction adheres to nonce ordering
-	if pool.currentState.GetNonce(from) > tx.Nonce() {
+	//if pool.currentState.GetNonce(from) > tx.Nonce() {
+	//	return ErrNonceTooLow
+	//}
+	//sylarChange //使用缓存
+	if pool.pendingNonces.getNonceFromCache(from) > tx.Nonce() {
 		return ErrNonceTooLow
 	}
 	// Transactor should have enough funds to cover the costs
 	// cost == V + GP * GL
-	if pool.currentState.GetBalance(from).Cmp(tx.Cost()) < 0 {
+	//sylarChange //使用缓存
+	if pool.pendingNonces.GetBalance(from).Cmp(tx.Cost()) < 0 {
 		return ErrInsufficientFunds
 	}
+	//if pool.currentState.GetBalance(from).Cmp(tx.Cost()) < 0 {
+	//	return ErrInsufficientFunds
+	//}
 	// Ensure the transaction has more gas than the basic tx fee.
 	intrGas, err := IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, true, pool.istanbul)
 	if err != nil {
@@ -902,10 +918,14 @@ func (pool *TxPool) AddLocal(tx *types.Transaction) error {
 	//sylarChange
 	//errs := pool.AddLocals([]*types.Transaction{tx})
 	//return errs[0]
-	//add
-	//应该是api-backend调用geth api 发送交易会新增到本地
-	fmt.Println("sylarChange : send transaction now......")
-	pool.txFeed.Send(NewTxsEvent{[]*types.Transaction{tx}})
+	//add //应该是api-backend调用geth api 发送交易会新增到本地
+	select {
+	case pool.directTxs <- []*types.Transaction{tx}:
+	default:
+		log.Error("AddLocal directTxs is busy")
+	}
+	//入池
+	pool.AddLocals([]*types.Transaction{tx})
 	return nil
 }
 
@@ -1257,8 +1277,11 @@ func (pool *TxPool) runReorg(done chan struct{}, reset *txpoolResetRequest, dirt
 		for addr, list := range pool.pending {
 			highestPending := list.LastElement()
 			nonces[addr] = highestPending.Nonce() + 1
+			//sylarChange
+			pool.pendingNonces.set(addr, highestPending.Nonce()+1)
 		}
-		pool.pendingNonces.setAll(nonces)
+		//sylarChange
+		//pool.pendingNonces.setAll(nonces)
 	}
 	// Ensure pool.queue and pool.pending sizes stay within the configured limits.
 	pool.truncatePending()
@@ -1290,78 +1313,81 @@ func (pool *TxPool) runReorg(done chan struct{}, reset *txpoolResetRequest, dirt
 func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	// If we're reorging an old state, reinject all dropped transactions
 	var reinject types.Transactions
-
-	if oldHead != nil && oldHead.Hash() != newHead.ParentHash {
-		// If the reorg is too deep, avoid doing it (will happen during fast sync)
-		oldNum := oldHead.Number.Uint64()
-		newNum := newHead.Number.Uint64()
-
-		if depth := uint64(math.Abs(float64(oldNum) - float64(newNum))); depth > 64 {
-			log.Debug("Skipping deep transaction reorg", "depth", depth)
-		} else {
-			// Reorg seems shallow enough to pull in all transactions into memory
-			var discarded, included types.Transactions
-			var (
-				rem = pool.chain.GetBlock(oldHead.Hash(), oldHead.Number.Uint64())
-				add = pool.chain.GetBlock(newHead.Hash(), newHead.Number.Uint64())
-			)
-			if rem == nil {
-				// This can happen if a setHead is performed, where we simply discard the old
-				// head from the chain.
-				// If that is the case, we don't have the lost transactions any more, and
-				// there's nothing to add
-				if newNum >= oldNum {
-					// If we reorged to a same or higher number, then it's not a case of setHead
-					log.Warn("Transaction pool reset with missing oldhead",
-						"old", oldHead.Hash(), "oldnum", oldNum, "new", newHead.Hash(), "newnum", newNum)
-					return
-				}
-				// If the reorg ended up on a lower number, it's indicative of setHead being the cause
-				log.Debug("Skipping transaction reset caused by setHead",
-					"old", oldHead.Hash(), "oldnum", oldNum, "new", newHead.Hash(), "newnum", newNum)
-				// We still need to update the current state s.th. the lost transactions can be readded by the user
-			} else {
-				for rem.NumberU64() > add.NumberU64() {
-					discarded = append(discarded, rem.Transactions()...)
-					if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
-						log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
-						return
-					}
-				}
-				for add.NumberU64() > rem.NumberU64() {
-					included = append(included, add.Transactions()...)
-					if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
-						log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
-						return
-					}
-				}
-				for rem.Hash() != add.Hash() {
-					discarded = append(discarded, rem.Transactions()...)
-					if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
-						log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
-						return
-					}
-					included = append(included, add.Transactions()...)
-					if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
-						log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
-						return
-					}
-				}
-				reinject = types.TxDifference(discarded, included)
-			}
-		}
-	}
+	//sylarChange 校验新旧Head是否符合规则？
+	//if oldHead != nil && oldHead.Hash() != newHead.ParentHash {
+	//	// If the reorg is too deep, avoid doing it (will happen during fast sync)
+	//	oldNum := oldHead.Number.Uint64()
+	//	newNum := newHead.Number.Uint64()
+	//
+	//	if depth := uint64(math.Abs(float64(oldNum) - float64(newNum))); depth > 64 {
+	//		log.Debug("Skipping deep transaction reorg", "depth", depth)
+	//	} else {
+	//		// Reorg seems shallow enough to pull in all transactions into memory
+	//		var discarded, included types.Transactions
+	//		var (
+	//			rem = pool.chain.GetBlock(oldHead.Hash(), oldHead.Number.Uint64())
+	//			add = pool.chain.GetBlock(newHead.Hash(), newHead.Number.Uint64())
+	//		)
+	//		if rem == nil {
+	//			// This can happen if a setHead is performed, where we simply discard the old
+	//			// head from the chain.
+	//			// If that is the case, we don't have the lost transactions any more, and
+	//			// there's nothing to add
+	//			if newNum >= oldNum {
+	//				// If we reorged to a same or higher number, then it's not a case of setHead
+	//				log.Warn("Transaction pool reset with missing oldhead",
+	//					"old", oldHead.Hash(), "oldnum", oldNum, "new", newHead.Hash(), "newnum", newNum)
+	//				return
+	//			}
+	//			// If the reorg ended up on a lower number, it's indicative of setHead being the cause
+	//			log.Debug("Skipping transaction reset caused by setHead",
+	//				"old", oldHead.Hash(), "oldnum", oldNum, "new", newHead.Hash(), "newnum", newNum)
+	//			// We still need to update the current state s.th. the lost transactions can be readded by the user
+	//		} else {
+	//			for rem.NumberU64() > add.NumberU64() {
+	//				discarded = append(discarded, rem.Transactions()...)
+	//				if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
+	//					log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
+	//					return
+	//				}
+	//			}
+	//			for add.NumberU64() > rem.NumberU64() {
+	//				included = append(included, add.Transactions()...)
+	//				if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
+	//					log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
+	//					return
+	//				}
+	//			}
+	//			for rem.Hash() != add.Hash() {
+	//				discarded = append(discarded, rem.Transactions()...)
+	//				if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
+	//					log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
+	//					return
+	//				}
+	//				included = append(included, add.Transactions()...)
+	//				if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
+	//					log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
+	//					return
+	//				}
+	//			}
+	//			reinject = types.TxDifference(discarded, included)
+	//		}
+	//	}
+	//}
 	// Initialize the internal state to the current head
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock().Header() // Special case during testing
 	}
-	statedb, err := pool.chain.StateAt(newHead.Root)
+	statedb, err := pool.chain.StateAt(pool.chain.CurrentBlock().Header().Root)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
 		return
 	}
 	pool.currentState = statedb
-	pool.pendingNonces = newTxNoncer(statedb)
+	//sylarChange-warning 原代码是resetBlock,由于函数更改为入参参数类型为 Header 需要测试
+	log.Debug("⚠️⚠️⚠️ core/tx_pool.go resetBlock函数调用,原函数入参类型为Header,新代码入参类型为Block需要注意")
+	pool.pendingNonces.reset(pool.signer, pool.chain.CurrentBlock())
+	//pool.pendingNonces = newTxNoncer(statedb)
 	pool.currentMaxGas = newHead.GasLimit
 
 	// Inject any transactions discarded due to reorgs
@@ -1390,14 +1416,18 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) []*types.Trans
 			continue // Just in case someone calls with a non existing account
 		}
 		// Drop all transactions that are deemed too old (low nonce)
-		forwards := list.Forward(pool.currentState.GetNonce(addr))
+		//sylarChange 使用缓存
+		forwards := list.Forward(pool.pendingNonces.getNonceFromCache(addr))
+		//forwards := list.Forward(pool.currentState.GetNonce(addr))
 		for _, tx := range forwards {
 			hash := tx.Hash()
 			pool.all.Remove(hash)
 		}
 		log.Trace("Removed old queued transactions", "count", len(forwards))
 		// Drop all transactions that are too costly (low balance or out of gas)
-		drops, _ := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
+		//sylarChange 使用缓存
+		drops, _ := list.Filter(pool.pendingNonces.GetBalance(addr), pool.currentMaxGas)
+		//drops, _ := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
 		for _, tx := range drops {
 			hash := tx.Hash()
 			pool.all.Remove(hash)
@@ -1584,7 +1614,9 @@ func (pool *TxPool) truncateQueue() {
 func (pool *TxPool) demoteUnexecutables() {
 	// Iterate over all accounts and demote any non-executable transactions
 	for addr, list := range pool.pending {
-		nonce := pool.currentState.GetNonce(addr)
+		//sylarChange 使用缓存
+		nonce := pool.pendingNonces.getNonceFromCache(addr)
+		//nonce := pool.currentState.GetNonce(addr)
 
 		// Drop all transactions that are deemed too old (low nonce)
 		olds := list.Forward(nonce)
@@ -1594,7 +1626,9 @@ func (pool *TxPool) demoteUnexecutables() {
 			log.Trace("Removed old pending transaction", "hash", hash)
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
-		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
+		//sylarChange 使用缓存
+		drops, invalids := list.Filter(pool.pendingNonces.GetBalance(addr), pool.currentMaxGas)
+		//drops, invalids := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
 		for _, tx := range drops {
 			hash := tx.Hash()
 			log.Trace("Removed unpayable pending transaction", "hash", hash)
@@ -1896,4 +1930,9 @@ func (t *txLookup) RemotesBelowTip(threshold *big.Int) types.Transactions {
 // numSlots calculates the number of slots needed for a single transaction.
 func numSlots(tx *types.Transaction) int {
 	return int((tx.Size() + txSlotSize - 1) / txSlotSize)
+}
+
+// sylarChange
+func (pool *TxPool) SubscribeNewDirectTxsEvent(ch chan []*types.Transaction) {
+	pool.directTxs = ch
 }

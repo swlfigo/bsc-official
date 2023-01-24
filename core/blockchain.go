@@ -165,6 +165,20 @@ var defaultCacheConfig = &CacheConfig{
 	SnapshotWait:   true,
 }
 
+// sylarChange // begin
+type HashNumber struct {
+	hash   string
+	number *big.Int
+}
+
+type HashNumbers []HashNumber
+
+func (h HashNumbers) Len() int           { return len(h) }
+func (h HashNumbers) Less(i, j int) bool { return h[i].number.Cmp(h[j].number) == -1 }
+func (h HashNumbers) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+// sylarChange // end
+
 type BlockChainOption func(*BlockChain) (*BlockChain, error)
 
 // BlockChain represents the canonical chain given a database with a genesis
@@ -1658,24 +1672,26 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 	if len(chain) == 0 {
 		return 0, nil
 	}
-	bc.blockProcFeed.Send(true)
-	defer bc.blockProcFeed.Send(false)
-
-	// Do a sanity check that the provided chain is actually ordered and linked.
-	for i := 1; i < len(chain); i++ {
-		block, prev := chain[i], chain[i-1]
-		if block.NumberU64() != prev.NumberU64()+1 || block.ParentHash() != prev.Hash() {
-			log.Error("Non contiguous block insert",
-				"number", block.Number(),
-				"hash", block.Hash(),
-				"parent", block.ParentHash(),
-				"prevnumber", prev.Number(),
-				"prevhash", prev.Hash(),
-			)
-			return 0, fmt.Errorf("non contiguous insert: item %d is #%d [%x..], item %d is #%d [%x..] (parent [%x..])", i-1, prev.NumberU64(),
-				prev.Hash().Bytes()[:4], i, block.NumberU64(), block.Hash().Bytes()[:4], block.ParentHash().Bytes()[:4])
-		}
-	}
+	//sylarChanage
+	//由于不需要确认Block顺序校验,直接去除改遍历方法
+	//bc.blockProcFeed.Send(true)
+	//defer bc.blockProcFeed.Send(false)
+	//
+	//// Do a sanity check that the provided chain is actually ordered and linked.
+	//for i := 1; i < len(chain); i++ {
+	//	block, prev := chain[i], chain[i-1]
+	//	if block.NumberU64() != prev.NumberU64()+1 || block.ParentHash() != prev.Hash() {
+	//		log.Error("Non contiguous block insert",
+	//			"number", block.Number(),
+	//			"hash", block.Hash(),
+	//			"parent", block.ParentHash(),
+	//			"prevnumber", prev.Number(),
+	//			"prevhash", prev.Hash(),
+	//		)
+	//		return 0, fmt.Errorf("non contiguous insert: item %d is #%d [%x..], item %d is #%d [%x..] (parent [%x..])", i-1, prev.NumberU64(),
+	//			prev.Hash().Bytes()[:4], i, block.NumberU64(), block.Hash().Bytes()[:4], block.ParentHash().Bytes()[:4])
+	//	}
+	//}
 	// Pre-checks passed, start the full block imports
 	if !bc.chainmu.TryLock() {
 		return 0, errChainStopped
@@ -1695,6 +1711,16 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool) (int, error) {
 	// If the chain is terminating, don't even bother starting up.
 	if bc.insertStopped() {
+		return 0, nil
+	}
+
+	//sylarChange 不需要把Block信息记录到本地DB,后续逻辑Return
+	if len(chain) > 0 {
+		for _, block := range chain {
+			blockHash := block.Hash().String()
+			log.Debug("insertChain", "block number", block.Number().String(), "hash", blockHash)
+			bc.chainHeadFeed.Send(ChainHeadEvent{Block: block})
+		}
 		return 0, nil
 	}
 
@@ -2122,7 +2148,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 		return it.index, err
 	}
 	if !reorg {
-		localTd := bc.GetTd(current.Hash(), current.NumberU64())
+		localTd := bc.GetTd(current.Hash(), current.NumberU64()) //  //localTd是主链上最新的一个区块的累计Difficulty值（Total Difficulty）
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, err
 	}

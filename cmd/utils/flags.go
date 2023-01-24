@@ -111,6 +111,23 @@ func printHelp(out io.Writer, templ string, data interface{}) {
 // are the same for all commands.
 
 var (
+	//sylarChange //新增geth Params
+	BaseDifficultyFlag = cli.StringFlag{
+		Name:  "base.difficulty",
+		Usage: "基点总难度",
+	}
+	BaseHashFlag = cli.StringFlag{
+		Name:  "base.hash",
+		Usage: "基点块哈希",
+	}
+	BlockIntervalFlag = cli.IntFlag{
+		Name:  "block.interval",
+		Usage: "高度间隔",
+	}
+	BlockBroadcastIntervalFlag = cli.IntFlag{
+		Name:  "block.broadcast.interval",
+		Usage: "区块广播间隔",
+	}
 	// General settings
 	DataDirFlag = DirectoryFlag{
 		Name:  "datadir",
@@ -1690,6 +1707,29 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.GlobalIsSet(DiffSyncFlag.Name) {
 		cfg.DiffSync = ctx.GlobalBool(DiffSyncFlag.Name)
 	}
+	//sylarChange //Begin
+	if ctx.GlobalIsSet(BaseDifficultyFlag.Name) {
+		baseDifficultyStr := ctx.GlobalString(BaseDifficultyFlag.Name)
+		baseDifficulty, ok := big.NewInt(0).SetString(baseDifficultyStr, 10)
+		if ok {
+			cfg.BaseDifficulty = baseDifficulty
+		}
+		log.Info("GlobalIsSet BaseDifficulty", "cfg.BaseDifficulty", cfg.BaseDifficulty.String())
+	}
+	if ctx.GlobalIsSet(BaseHashFlag.Name) {
+		baseHashStr := ctx.GlobalString(BaseHashFlag.Name)
+		baseHash := common.HexToHash(baseHashStr)
+		cfg.BaseHash = baseHash
+		log.Info("GlobalIsSet BaseHashFlag", "cfg.BaseHash", cfg.BaseHash.String())
+	}
+	if ctx.GlobalIsSet(BlockIntervalFlag.Name) {
+		cfg.BlockInterval = ctx.GlobalInt(BlockIntervalFlag.Name)
+	}
+	if ctx.GlobalIsSet(BlockBroadcastIntervalFlag.Name) {
+		cfg.BlockBroadcastInterval = ctx.GlobalInt(BlockBroadcastIntervalFlag.Name)
+	}
+	//sylarChange //end
+
 	if ctx.GlobalIsSet(PipeCommitFlag.Name) {
 		cfg.PipeCommit = ctx.GlobalBool(PipeCommitFlag.Name)
 	}

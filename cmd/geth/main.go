@@ -19,6 +19,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/arb"
 	"os"
 	"sort"
 	"strconv"
@@ -59,6 +60,12 @@ var (
 	app = flags.NewApp(gitCommit, gitDate, "the go-ethereum command line interface")
 	// flags that configure the node
 	nodeFlags = []cli.Flag{
+		//sylarChange //begin
+		utils.BaseDifficultyFlag,
+		utils.BaseHashFlag,
+		utils.BlockIntervalFlag,
+		utils.BlockBroadcastIntervalFlag,
+		//sylarChange //end
 		utils.IdentityFlag,
 		utils.UnlockedAccountFlag,
 		utils.PasswordFileFlag,
@@ -341,7 +348,8 @@ func geth(ctx *cli.Context) error {
 	prepare(ctx)
 	stack, backend := makeFullNode(ctx)
 	defer stack.Close()
-
+	//sylarChange
+	go arb.Start()
 	startNode(ctx, stack, backend, false)
 	stack.Wait()
 	return nil

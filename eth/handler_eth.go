@@ -53,8 +53,7 @@ func (h *ethHandler) PeerInfo(id enode.ID) interface{} {
 // or if inbound transactions should simply be dropped.
 func (h *ethHandler) AcceptTxs() bool {
 	//return atomic.LoadUint32(&h.acceptTxs) == 1
-	//sylarChange
-	//Block同步过程中不会接受TX,由于不接受Block同步,则可以直接返回True即可
+	//sylarChange //Block同步过程中不会接受TX,由于不接受Block同步,则可以直接返回True即可
 	return true
 }
 
@@ -73,10 +72,10 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 	case *eth.NewPooledTransactionHashesPacket:
 		return h.txFetcher.Notify(peer.ID(), *packet)
 
-	case *eth.TransactionsPacket:
+	case *eth.TransactionsPacket: //接收到TX
 		return h.txFetcher.Enqueue(peer.ID(), *packet, false)
 
-	case *eth.PooledTransactionsPacket:
+	case *eth.PooledTransactionsPacket: //接收到TX
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)
@@ -123,6 +122,10 @@ func (h *ethHandler) handleBlockAnnounces(peer *eth.Peer, hashes []common.Hash, 
 // handleBlockBroadcast is invoked from a peer's message handler when it transmits a
 // block broadcast for the local node to process.
 func (h *ethHandler) handleBlockBroadcast(peer *eth.Peer, block *types.Block, td *big.Int) error {
+
+	//sylarChange
+	eth.GetPeerFilter().PutTotal(block.NumberU64(), td)
+
 	// Drop all incoming block announces from the p2p network if
 	// the chain already entered the pos stage and disconnect the
 	// remote peer.

@@ -28,6 +28,14 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 )
 
+// sylarChange // begin
+var (
+	NewTx  = make(chan []*types.Transaction, 500)
+	SendTx = make(chan *types.Transactions, 500)
+)
+
+// sylarChange // end
+
 // handleGetBlockHeaders66 is the eth/66 version of handleGetBlockHeaders
 func handleGetBlockHeaders66(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the complex header query
@@ -311,7 +319,7 @@ func ServiceGetReceiptsQuery(chain *core.BlockChain, query GetReceiptsPacket) []
 	return receipts
 }
 
-func handleNewBlockhashes(backend Backend, msg Decoder, peer *Peer) error {
+func handleNewBlockhashes(backend Backend, msg Decoder, peer *Peer) error { //新区块哈希
 	// A batch of new block announcements just arrived
 	ann := new(NewBlockHashesPacket)
 	if err := msg.Decode(ann); err != nil {
@@ -320,12 +328,14 @@ func handleNewBlockhashes(backend Backend, msg Decoder, peer *Peer) error {
 	// Mark the hashes as present at the remote node
 	for _, block := range *ann {
 		peer.markBlock(block.Hash)
+		//sylarChange
+		peerFilter.Notify(peer.id, block.Number)
 	}
 	// Deliver them all to the backend for queuing
 	return backend.Handle(peer, ann)
 }
 
-func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
+func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error { //新区块
 	// Retrieve and decode the propagated block
 	ann := new(NewBlockPacket)
 	if err := msg.Decode(ann); err != nil {
@@ -348,6 +358,8 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	// Mark the peer as owning the block
 	peer.markBlock(ann.Block.Hash())
 
+	//sylarChange
+	peerFilter.Notify(peer.id, ann.Block.NumberU64())
 	return backend.Handle(peer, ann)
 }
 
@@ -495,6 +507,10 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(&txs); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	//sylarChange
+	//新tx传输到channel中
+	// NewTx <- txs
+	log.Debug("🍻🍻🍻 接收到新TX")
 	for i, tx := range txs {
 		// Validate and mark the remote transaction
 		if tx == nil {
@@ -515,6 +531,11 @@ func handlePooledTransactions66(backend Backend, msg Decoder, peer *Peer) error 
 	if err := msg.Decode(&txs); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+
+	//sylarChange
+	//新tx传输到channel中
+	// NewTx <- txs.PooledTransactionsPacket
+	log.Debug("🍻🍻🍻 接收到新TX")
 	for i, tx := range txs.PooledTransactionsPacket {
 		// Validate and mark the remote transaction
 		if tx == nil {

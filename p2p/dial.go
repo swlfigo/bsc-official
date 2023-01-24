@@ -178,8 +178,7 @@ func newDialScheduler(config dialConfig, it enode.Iterator, setupFunc dialSetupF
 	d.ctx, d.cancel = context.WithCancel(context.Background())
 	d.wg.Add(2)
 	gopool.Submit(func() {
-		//sylarChange
-		//从节点查找中获取节点
+		//sylarChange //从节点查找中获取节点
 		d.readNodes(it)
 	})
 	gopool.Submit(

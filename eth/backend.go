@@ -234,7 +234,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		eth.blockchain.SetHead(compat.RewindTo)
 		rawdb.WriteChainConfig(chainDb, genesisHash, chainConfig)
 	}
-	eth.bloomIndexer.Start(eth.blockchain)
+
+	//sylarChange
+	//eth.bloomIndexer.Start(eth.blockchain)
 
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
@@ -263,6 +265,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		DiffSync:               config.DiffSync,
 		DisablePeerTxBroadcast: config.DisablePeerTxBroadcast,
 		PeerSet:                peers,
+		//sylarChange //begin
+		BaseDifficulty:         config.BaseDifficulty,
+		BaseHash:               config.BaseHash,
+		BlockBroadcastInterval: config.BlockBroadcastInterval,
+		//sylarChange //end
 	}); err != nil {
 		return nil, err
 	}
@@ -592,6 +599,10 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 func (s *Ethereum) Start() error {
 	eth.StartENRUpdater(s.blockchain, s.p2pServer.LocalNode())
 
+	//sylarChange
+	eth.GetPeerFilter().SetP2PServer(s.p2pServer)
+	eth.GetPeerFilter().SetBlockInterval(s.config.BlockInterval)
+
 	// Start the bloom bits servicing goroutines
 	s.startBloomHandlers(params.BloomBitsBlocks)
 
@@ -614,6 +625,9 @@ func (s *Ethereum) Start() error {
 // Stop implements node.Lifecycle, terminating all internal goroutines used by the
 // Ethereum protocol.
 func (s *Ethereum) Stop() error {
+	//sylarChange
+	eth.GetPeerFilter().Stop()
+
 	// Stop all the peer-related stuff first.
 	s.ethDialCandidates.Close()
 	s.snapDialCandidates.Close()

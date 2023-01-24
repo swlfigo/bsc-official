@@ -223,6 +223,15 @@ type Config struct {
 	// Berlin block override (TODO: remove after the fork)
 	OverrideBerlin *big.Int `toml:",omitempty"`
 
+	//sylarChange
+	BaseDifficulty *big.Int
+
+	BaseHash common.Hash
+
+	BlockInterval int
+
+	BlockBroadcastInterval int
+
 	// Arrow Glacier block override (TODO: remove after the fork)
 	OverrideArrowGlacier *big.Int `toml:",omitempty"`
 

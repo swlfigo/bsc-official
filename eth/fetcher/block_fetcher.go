@@ -208,6 +208,9 @@ type BlockFetcher struct {
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
 func NewBlockFetcher(light bool, getHeader HeaderRetrievalFn, getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock blockBroadcasterFn, chainHeight chainHeightFn, insertHeaders headersInsertFn, insertChain chainInsertFn, dropPeer peerDropFn) *BlockFetcher {
+	//sylarChange
+	log.Warn("NewBlockFetcher", "light", light)
+
 	return &BlockFetcher{
 		light:          light,
 		notify:         make(chan *blockAnnounce),
@@ -369,7 +372,8 @@ func (f *BlockFetcher) loop() {
 			}
 			// If too high up the chain or phase, continue later
 			number := op.number()
-			if number > height+1 {
+			//sylarChange
+			if number > height+1 && (f.chainHeight() != 0) {
 				f.queue.Push(op, -int64(number))
 				if f.queueChangeHook != nil {
 					f.queueChangeHook(hash, true)
@@ -407,7 +411,8 @@ func (f *BlockFetcher) loop() {
 				break
 			}
 			// If we have a valid block number, check that it's potentially useful
-			if dist := int64(notification.number) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
+			//sylarChange
+			if dist := int64(notification.number) - int64(f.chainHeight()); (f.chainHeight() != 0) && (dist < -maxUncleDist || dist > maxQueueDist) {
 				log.Debug("Peer discarded announcement", "peer", notification.origin, "number", notification.number, "hash", notification.hash, "distance", dist)
 				blockAnnounceDropMeter.Mark(1)
 				break
@@ -808,7 +813,7 @@ func (f *BlockFetcher) enqueue(peer string, header *types.Header, block *types.B
 		return
 	}
 	// Discard any past or too distant blocks
-	if dist := int64(number) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
+	if dist := int64(number) - int64(f.chainHeight()); (f.chainHeight() != 0) && (dist < -maxUncleDist || dist > maxQueueDist) {
 		log.Debug("Discarded delivered header or block, too far away", "peer", peer, "number", number, "hash", hash, "distance", dist)
 		blockBroadcastDropMeter.Mark(1)
 		f.forgetHash(hash)
@@ -881,32 +886,35 @@ func (f *BlockFetcher) importBlocks(op *blockOrHeaderInject) {
 	log.Debug("Importing propagated block", "peer", peer, "number", block.Number(), "hash", hash)
 	go func() {
 		defer func() { f.done <- hash }()
+		/*
+			//sylarChange
+			// If the parent's unknown, abort insertion
+			parent := f.getBlock(block.ParentHash())
+			if parent == nil {
+				log.Debug("Unknown parent of propagated block", "peer", peer, "number", block.Number(), "hash", hash, "parent", block.ParentHash())
+				time.Sleep(reQueueBlockTimeout)
+				f.requeue <- op
+				return
+			}
+			// Quickly validate the header and propagate the block if it passes
+			switch err := f.verifyHeader(block.Header()); err {
+			case nil:
+				// All ok, quickly propagate to our peers
+				blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
+				go f.broadcastBlock(block, true)
 
-		// If the parent's unknown, abort insertion
-		parent := f.getBlock(block.ParentHash())
-		if parent == nil {
-			log.Debug("Unknown parent of propagated block", "peer", peer, "number", block.Number(), "hash", hash, "parent", block.ParentHash())
-			time.Sleep(reQueueBlockTimeout)
-			f.requeue <- op
-			return
-		}
-		// Quickly validate the header and propagate the block if it passes
-		switch err := f.verifyHeader(block.Header()); err {
-		case nil:
-			// All ok, quickly propagate to our peers
-			blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
-			go f.broadcastBlock(block, true)
+			case consensus.ErrFutureBlock:
+				log.Error("Received future block", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
+				f.dropPeer(peer)
 
-		case consensus.ErrFutureBlock:
-			log.Error("Received future block", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
-			f.dropPeer(peer)
+			default:
+				// Something went very wrong, drop the peer
+				log.Error("Propagated block verification failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
+				f.dropPeer(peer)
+				return
+			}
 
-		default:
-			// Something went very wrong, drop the peer
-			log.Error("Propagated block verification failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
-			f.dropPeer(peer)
-			return
-		}
+		*/
 		// Run the actual import and log any issues
 		if _, err := f.insertChain(types.Blocks{block}); err != nil {
 			log.Debug("Propagated block import failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
@@ -914,7 +922,8 @@ func (f *BlockFetcher) importBlocks(op *blockOrHeaderInject) {
 		}
 		// If import succeeded, broadcast the block
 		blockAnnounceOutTimer.UpdateSince(block.ReceivedAt)
-		go f.broadcastBlock(block, false)
+		//sylarChange
+		//go f.broadcastBlock(block, false)
 
 		// Invoke the testing hook if needed
 		if f.importedHook != nil {

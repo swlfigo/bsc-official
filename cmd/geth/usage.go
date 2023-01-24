@@ -63,6 +63,12 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.TriesInMemoryFlag,
 			utils.BlockAmountReserved,
 			utils.CheckSnapshotWithMPT,
+			//sylarChange //begin
+			utils.BaseDifficultyFlag,
+			utils.BaseHashFlag,
+			utils.BlockIntervalFlag,
+			utils.BlockBroadcastIntervalFlag,
+			//sylarChange //end
 		},
 	},
 	{

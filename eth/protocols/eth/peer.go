@@ -506,6 +506,11 @@ func (p *Peer) RequestTxs(hashes []common.Hash) error {
 	})
 }
 
+// sylarChange
+func (p *Peer) GetTD() *big.Int {
+	return p.td
+}
+
 // knownCache is a cache for known hashes.
 type knownCache struct {
 	hashes mapset.Set

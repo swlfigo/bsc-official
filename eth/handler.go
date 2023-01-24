@@ -18,6 +18,7 @@ package eth
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"sync"
@@ -80,6 +81,9 @@ type txPool interface {
 	// SubscribeReannoTxsEvent should return an event subscription of
 	// ReannoTxsEvent and send events to the given channel.
 	SubscribeReannoTxsEvent(chan<- core.ReannoTxsEvent) event.Subscription
+
+	//sylarChange
+	SubscribeNewDirectTxsEvent(chan []*types.Transaction)
 }
 
 // handlerConfig is the collection of initialization parameters to create a full
@@ -99,6 +103,11 @@ type handlerConfig struct {
 	DirectBroadcast        bool
 	DisablePeerTxBroadcast bool
 	PeerSet                *peerSet
+	//sylarChange //begin
+	BaseDifficulty         *big.Int
+	BaseHash               common.Hash
+	BlockBroadcastInterval int
+	//sylarChange //end
 }
 
 type handler struct {
@@ -140,6 +149,14 @@ type handler struct {
 	chainSync *chainSyncer
 	wg        sync.WaitGroup
 	peerWG    sync.WaitGroup
+
+	//sylarChange //begin
+	BaseDifficulty         *big.Int
+	BaseHash               common.Hash
+	directCh               chan []*types.Transaction
+	BlockBroadcastInterval int
+	blockBroadcastTimer    *time.Timer
+	//sylarChange //end
 }
 
 // newHandler returns a handler for all Ethereum chain management protocol.
@@ -151,6 +168,10 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	if config.PeerSet == nil {
 		config.PeerSet = newPeerSet() // Nicety initialization for tests
 	}
+
+	//sylarChange
+	blockBroadcastTimer := time.NewTimer(time.Duration(config.BlockBroadcastInterval) * time.Second)
+
 	h := &handler{
 		networkID:              config.Network,
 		forkFilter:             forkid.NewFilter(config.Chain),
@@ -165,6 +186,14 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		directBroadcast:        config.DirectBroadcast,
 		diffSync:               config.DiffSync,
 		quitSync:               make(chan struct{}),
+
+		//sylarChange //begin
+		BaseDifficulty:         config.BaseDifficulty,
+		BaseHash:               config.BaseHash,
+		BlockBroadcastInterval: config.BlockBroadcastInterval,
+		directCh:               make(chan []*types.Transaction, 1000),
+		blockBroadcastTimer:    blockBroadcastTimer,
+		//sylarChange //end
 	}
 	if config.Sync == downloader.FullSync {
 		// The database seems empty as the current block is the genesis. Yet the snap
@@ -231,7 +260,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	inserter := func(blocks types.Blocks) (int, error) {
 		// All the block fetcher activities should be disabled
 		// after the transition. Print the warning log.
-		if h.merger.PoSFinalized() {
+		if h.merger.PoSFinalized() { //sylarChange-warning POS相关,运行中没进入,保留
 			var ctx []interface{}
 			ctx = append(ctx, "blocks", len(blocks))
 			if len(blocks) > 0 {
@@ -249,20 +278,22 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		// the propagated block if the head is too old. Unfortunately there is a corner
 		// case when starting new networks, where the genesis might be ancient (0 unix)
 		// which would prevent full nodes from accepting it.
-		if h.chain.CurrentBlock().NumberU64() < h.checkpointNumber {
-			log.Warn("Unsynced yet, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
-			return 0, nil
-		}
+		//sylarChange //屏蔽不需要检查CheckPoint,继续走下方逻辑
+		//if h.chain.CurrentBlock().NumberU64() < h.checkpointNumber {
+		//	log.Warn("Unsynced yet, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
+		//	return 0, nil
+		//}
 		// If snap sync is running, deny importing weird blocks. This is a problematic
 		// clause when starting up a new network, because snap-syncing miners might not
 		// accept each others' blocks until a restart. Unfortunately we haven't figured
 		// out a way yet where nodes can decide unilaterally whether the network is new
 		// or not. This should be fixed if we figure out a solution.
-		if atomic.LoadUint32(&h.snapSync) == 1 {
-			log.Warn("Fast syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
-			return 0, nil
-		}
-		if h.merger.TDDReached() {
+		//sylarChange //屏蔽不需要检查CheckPoint,继续走下方逻辑
+		//if atomic.LoadUint32(&h.snapSync) == 1 {
+		//	log.Warn("Fast syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
+		//	return 0, nil
+		//}
+		if h.merger.TDDReached() { //sylarChange-warning POS相关,运行中没进入,保留（has left the PoW stage.）
 			// The blocks from the p2p network is regarded as untrusted
 			// after the transition. In theory block gossip should be disabled
 			// entirely whenever the transition is started. But in order to
@@ -285,6 +316,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			}
 			return 0, nil
 		}
+		//sylarChange
+		h.broadcastPeerBlockInfo(config, blocks)
 		n, err := h.chain.InsertChain(blocks)
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
@@ -302,6 +335,9 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, h.txpool.AddRemotes, fetchTx)
 	h.chainSync = newChainSyncer(h)
+	//sylarChange
+	eth.GetPeerFilter().Register(h.removePeer)
+
 	return h, nil
 }
 
@@ -345,6 +381,14 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		peer.Log().Debug("Ethereum handshake failed", "err", err)
 		return err
 	}
+
+	//sylarChange
+	if h.BaseDifficulty != nil {
+		if peer.GetTD().Cmp(h.BaseDifficulty) <= 0 {
+			return errors.New("total difficult is less than " + h.BaseDifficulty.String() + " peer td=" + peer.GetTD().String())
+		}
+	}
+
 	reject := false // reserved peer slots
 	if atomic.LoadUint32(&h.snapSync) == 1 {
 		if snap == nil {
@@ -390,7 +434,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 
 	// Propagate existing transactions. new transactions appearing
 	// after this will be sent via broadcasts.
-	h.syncTransactions(peer)
+	h.syncTransactions(peer) //sylarChange-discuss 应该可以不把trans发送给peer或只发一份
 
 	// Create a notification channel for pending requests if the peer goes down
 	dead := make(chan struct{})
@@ -480,6 +524,10 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 			}
 		}(number, hash)
 	}
+
+	//sylarChange
+	eth.GetPeerFilter().Notify(peer.ID(), 0)
+
 	// Handle incoming messages until the connection is torn down
 	return handler(peer)
 }
@@ -552,7 +600,8 @@ func (h *handler) unregisterPeer(id string) {
 	// Abort if the peer does not exist
 	peer := h.peers.peer(id)
 	if peer == nil {
-		logger.Error("Ethereum peer removal failed", "err", errPeerNotRegistered)
+		//sylarChange
+		logger.Debug("Ethereum peer removal failed", "err", errPeerNotRegistered, "id", id)
 		return
 	}
 	// Remove the `eth` peer if it exists
@@ -589,6 +638,11 @@ func (h *handler) Start(maxPeers int) {
 	h.wg.Add(1)
 	h.minedBlockSub = h.eventMux.Subscribe(core.NewMinedBlockEvent{})
 	go h.minedBroadcastLoop()
+
+	//sylarChange
+	h.wg.Add(1)
+	go h.txBroadcastLoopDirect()
+	h.txpool.SubscribeNewDirectTxsEvent(h.directCh)
 
 	// start sync handlers
 	h.wg.Add(1)
@@ -630,19 +684,29 @@ func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 		}
 	}
 	hash := block.Hash()
+	//sylarChange
 	peers := h.peers.peersWithoutBlock(hash)
 
 	// If propagation is requested, send to a subset of the peer
 	if propagate {
 		// Calculate the TD of the block (it's not imported yet, so block.Td is not valid)
 		var td *big.Int
-		if parent := h.chain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
-			td = new(big.Int).Add(block.Difficulty(), h.chain.GetTd(block.ParentHash(), block.NumberU64()-1))
-		} else {
-			log.Error("Propagating dangling block", "number", block.Number(), "hash", hash)
+		//sylarChange //由于BlockInfo没有存到本地.从Cache中读取td,
+		td = eth.GetPeerFilter().GetTotalDifficulty(block.NumberU64())
+		if td == nil {
+			log.Debug("Propagating dangling block", "number", block.Number(), "hash", hash)
 			return
 		}
+		//if parent := h.chain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
+		//	td = new(big.Int).Add(block.Difficulty(), h.chain.GetTd(block.ParentHash(), block.NumberU64()-1))
+		//} else {
+		//	log.Error("Propagating dangling block", "number", block.Number(), "hash", hash)
+		//	return
+		//}
+
 		// Send the block to a subset of our peers
+		//sylarChange-warning
+		fmt.Println("⚠️⚠️⚠️ handler.go BroadcastBlock propagate = true 发送Block给Peer,有异常需要留意,源代码是会发")
 		var transfer []*ethPeer
 		if h.directBroadcast {
 			transfer = peers[:]
@@ -662,6 +726,8 @@ func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 		return
 	}
 	// Otherwise if the block is indeed in out own chain, announce it
+	//sylarChange-warning (false时候好像本地挖矿代码挖到新区块会进入,可以后续屏蔽)
+	fmt.Println("⚠️⚠️⚠️ handler.go BroadcastBlock propagate = false 尝试发送Block给Peer,有异常需要留意,源代码是会发")
 	if h.chain.HasBlock(hash, block.NumberU64()) {
 		for _, peer := range peers {
 			peer.AsyncSendNewBlockHash(block)
@@ -731,7 +797,7 @@ func (h *handler) ReannounceTransactions(txs types.Transactions) {
 		"announce packs", peersCount, "announced hashes", peersCount*uint(len(hashes)))
 }
 
-// minedBroadcastLoop sends mined blocks to connected peers.
+// minedBroadcastLoop sends mined blocks to connected peers.// 订阅本地挖到新的区块的消息
 func (h *handler) minedBroadcastLoop() {
 	defer h.wg.Done()
 
@@ -749,8 +815,7 @@ func (h *handler) txBroadcastLoop() {
 	for {
 		select {
 		case event := <-h.txsCh:
-			//sylarChange
-			//不发送新的tx给peer,节省流量
+			//sylarChange-Disscuss //不发送新的tx给peer,节省流量 (整个Loop是否可以屏蔽)
 			//h.BroadcastTransactions(event.Txs)
 			log.Trace("txBroadcastLoop", "len", len(event.Txs))
 		case <-h.txsSub.Err():
@@ -768,6 +833,52 @@ func (h *handler) txReannounceLoop() {
 			h.ReannounceTransactions(event.Txs)
 		case <-h.reannoTxsSub.Err():
 			return
+		}
+	}
+}
+
+// sylarChange
+func (h *handler) BroadcastTransactionsDirect(txs *types.Transactions) {
+	peers := h.peers.PeersAll()
+	for count, _ := range peers {
+		go func(count int) {
+			peers[count].SendTransactions(*txs)
+		}(count)
+	}
+}
+
+// sylarChange
+func (h *handler) txBroadcastLoopDirect() {
+	defer h.wg.Done()
+	for {
+		select {
+		case txs := <-eth.SendTx:
+			h.BroadcastTransactionsDirect(txs)
+		case <-h.txsSub.Err():
+			return
+		}
+	}
+}
+
+// sylarChange // 定时x秒给Peer发送Block信息防止掉线
+func (h *handler) broadcastPeerBlockInfo(config *handlerConfig, blocks types.Blocks) { //sylarChange-warning 如果Timer到了时间只需要遍历一次blocks,发送Peer信息 && 记录blocksNum,省去一次遍历时间消耗
+	var hasBroadcastToPeer bool = false
+	select {
+	case <-h.blockBroadcastTimer.C:
+		log.Info("🍻🍻🍻 Sylar Log:定时器开始发送Block信息到Peer")
+		hasBroadcastToPeer = true
+		for i, _ := range blocks {
+			log.Debug("blockBroadcastTimer arrive", "BlockBroadcastInterval", config.BlockBroadcastInterval)
+			h.BroadcastBlock(blocks[i], true)
+			eth.GetPeerFilter().PutNumber(blocks[i].NumberU64(), blocks[i].Difficulty())
+		}
+		h.blockBroadcastTimer.Reset(time.Duration(config.BlockBroadcastInterval) * time.Second)
+	default:
+		log.Debug("blockBroadcastTimer not arrive", "number", blocks[0].Number())
+	}
+	if hasBroadcastToPeer == false {
+		for i, _ := range blocks {
+			eth.GetPeerFilter().PutNumber(blocks[i].NumberU64(), blocks[i].Difficulty())
 		}
 	}
 }

@@ -495,3 +495,14 @@ func (ps *peerSet) close() {
 	}
 	ps.closed = true
 }
+
+// sylarChange
+func (ps *peerSet) PeersAll() []*ethPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+	list := make([]*ethPeer, 0, len(ps.peers))
+	for _, p := range ps.peers {
+		list = append(list, p)
+	}
+	return list
+}

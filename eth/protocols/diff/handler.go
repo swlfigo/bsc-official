@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
@@ -100,54 +99,57 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return fmt.Errorf("%w: %v > %v", errMsgTooLarge, msg.Size, maxMessageSize)
 	}
 	defer msg.Discard()
-	start := time.Now()
-	// Track the emount of time it takes to serve the request and run the handler
-	if metrics.Enabled {
-		h := fmt.Sprintf("%s/%s/%d/%#02x", p2p.HandleHistName, ProtocolName, peer.Version(), msg.Code)
-		defer func(start time.Time) {
-			sampler := func() metrics.Sample {
-				return metrics.ResettingSample(
-					metrics.NewExpDecaySample(1028, 0.015),
-				)
-			}
-			metrics.GetOrRegisterHistogramLazy(h, nil, sampler).Update(time.Since(start).Microseconds())
-		}(start)
-	}
-	// Handle the message depending on its contents
-	switch {
-	case msg.Code == GetDiffLayerMsg:
-		res := new(GetDiffLayersPacket)
-		if err := msg.Decode(res); err != nil {
-			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-		}
-		diffs := answerDiffLayersQuery(backend, res)
-
-		p2p.Send(peer.rw, FullDiffLayerMsg, &FullDiffLayersPacket{
-			RequestId:        res.RequestId,
-			DiffLayersPacket: diffs,
-		})
-		return nil
-
-	case msg.Code == DiffLayerMsg:
-		// A batch of trie nodes arrived to one of our previous requests
-		res := new(DiffLayersPacket)
-		if err := msg.Decode(res); err != nil {
-			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-		}
-		return backend.Handle(peer, res)
-	case msg.Code == FullDiffLayerMsg:
-		// A batch of trie nodes arrived to one of our previous requests
-		res := new(FullDiffLayersPacket)
-		if err := msg.Decode(res); err != nil {
-			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-		}
-		if fulfilled := requestTracker.Fulfil(peer.id, peer.version, FullDiffLayerMsg, res.RequestId); fulfilled {
-			return backend.Handle(peer, res)
-		}
-		return fmt.Errorf("%w: %v", errUnexpectedMsg, msg.Code)
-	default:
-		return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
-	}
+	//sylarChange-warning
+	//todo
+	return nil
+	//start := time.Now()
+	//// Track the emount of time it takes to serve the request and run the handler
+	//if metrics.Enabled {
+	//	h := fmt.Sprintf("%s/%s/%d/%#02x", p2p.HandleHistName, ProtocolName, peer.Version(), msg.Code)
+	//	defer func(start time.Time) {
+	//		sampler := func() metrics.Sample {
+	//			return metrics.ResettingSample(
+	//				metrics.NewExpDecaySample(1028, 0.015),
+	//			)
+	//		}
+	//		metrics.GetOrRegisterHistogramLazy(h, nil, sampler).Update(time.Since(start).Microseconds())
+	//	}(start)
+	//}
+	//// Handle the message depending on its contents
+	//switch {
+	//case msg.Code == GetDiffLayerMsg:
+	//	res := new(GetDiffLayersPacket)
+	//	if err := msg.Decode(res); err != nil {
+	//		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	//	}
+	//	diffs := answerDiffLayersQuery(backend, res)
+	//
+	//	p2p.Send(peer.rw, FullDiffLayerMsg, &FullDiffLayersPacket{
+	//		RequestId:        res.RequestId,
+	//		DiffLayersPacket: diffs,
+	//	})
+	//	return nil
+	//
+	//case msg.Code == DiffLayerMsg:
+	//	// A batch of trie nodes arrived to one of our previous requests
+	//	res := new(DiffLayersPacket)
+	//	if err := msg.Decode(res); err != nil {
+	//		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	//	}
+	//	return backend.Handle(peer, res)
+	//case msg.Code == FullDiffLayerMsg:
+	//	// A batch of trie nodes arrived to one of our previous requests
+	//	res := new(FullDiffLayersPacket)
+	//	if err := msg.Decode(res); err != nil {
+	//		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	//	}
+	//	if fulfilled := requestTracker.Fulfil(peer.id, peer.version, FullDiffLayerMsg, res.RequestId); fulfilled {
+	//		return backend.Handle(peer, res)
+	//	}
+	//	return fmt.Errorf("%w: %v", errUnexpectedMsg, msg.Code)
+	//default:
+	//	return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
+	//}
 }
 
 func answerDiffLayersQuery(backend Backend, query *GetDiffLayersPacket) []rlp.RawValue {

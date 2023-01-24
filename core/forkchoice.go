@@ -73,7 +73,7 @@ func NewForkChoice(chainReader ChainReader, preserve func(header *types.Header) 
 // based on the given external header and local canonical chain.
 // In the td mode, the new head is chosen if the corresponding
 // total difficulty is higher. In the extern mode, the trusted
-// header is always selected as the head.
+// header is always selected as the head.//新插入区块时会判断当前区块所在的分支是否已经成为主链
 func (f *ForkChoice) ReorgNeeded(current *types.Header, header *types.Header) (bool, error) {
 	var (
 		localTD  = f.chain.GetTd(current.Hash(), current.Number.Uint64())
