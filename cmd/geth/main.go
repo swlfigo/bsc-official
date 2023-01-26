@@ -62,7 +62,6 @@ var (
 	nodeFlags = []cli.Flag{
 		//sylarChange //begin
 		utils.BaseDifficultyFlag,
-		utils.BaseHashFlag,
 		utils.BlockIntervalFlag,
 		utils.BlockBroadcastIntervalFlag,
 		//sylarChange //end

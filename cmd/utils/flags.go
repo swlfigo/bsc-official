@@ -116,10 +116,6 @@ var (
 		Name:  "base.difficulty",
 		Usage: "基点总难度",
 	}
-	BaseHashFlag = cli.StringFlag{
-		Name:  "base.hash",
-		Usage: "基点块哈希",
-	}
 	BlockIntervalFlag = cli.IntFlag{
 		Name:  "block.interval",
 		Usage: "高度间隔",
@@ -1715,15 +1711,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.BaseDifficulty = baseDifficulty
 		}
 		log.Info("GlobalIsSet BaseDifficulty", "cfg.BaseDifficulty", cfg.BaseDifficulty.String())
-	}
-	if ctx.GlobalIsSet(BaseHashFlag.Name) {
-		baseHashStr := ctx.GlobalString(BaseHashFlag.Name)
-		baseHash := common.HexToHash(baseHashStr)
-		cfg.BaseHash = baseHash
-		log.Info("GlobalIsSet BaseHashFlag", "cfg.BaseHash", cfg.BaseHash.String())
-	}
-	if ctx.GlobalIsSet(BlockIntervalFlag.Name) {
-		cfg.BlockInterval = ctx.GlobalInt(BlockIntervalFlag.Name)
 	}
 	if ctx.GlobalIsSet(BlockBroadcastIntervalFlag.Name) {
 		cfg.BlockBroadcastInterval = ctx.GlobalInt(BlockBroadcastIntervalFlag.Name)
