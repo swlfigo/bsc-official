@@ -634,10 +634,10 @@ func (h *handler) Start(maxPeers int) {
 	h.reannoTxsSub = h.txpool.SubscribeReannoTxsEvent(h.reannoTxsCh)
 	go h.txReannounceLoop()
 
-	// broadcast mined blocks
-	h.wg.Add(1)
-	h.minedBlockSub = h.eventMux.Subscribe(core.NewMinedBlockEvent{})
-	go h.minedBroadcastLoop()
+	// sylarChange-expirement 由于不需要挖矿,可以屏蔽相关协成Loop broadcast mined blocks
+	//h.wg.Add(1)
+	//h.minedBlockSub = h.eventMux.Subscribe(core.NewMinedBlockEvent{})
+	//go h.minedBroadcastLoop()
 
 	//sylarChange
 	h.wg.Add(1)
@@ -650,9 +650,9 @@ func (h *handler) Start(maxPeers int) {
 }
 
 func (h *handler) Stop() {
-	h.txsSub.Unsubscribe()        // quits txBroadcastLoop
-	h.reannoTxsSub.Unsubscribe()  // quits txReannounceLoop
-	h.minedBlockSub.Unsubscribe() // quits blockBroadcastLoop
+	h.txsSub.Unsubscribe()       // quits txBroadcastLoop
+	h.reannoTxsSub.Unsubscribe() // quits txReannounceLoop
+	//h.minedBlockSub.Unsubscribe() // quits blockBroadcastLoop
 
 	// Quit chainSync and txsync64.
 	// After this is done, no new peers will be accepted.
@@ -797,17 +797,17 @@ func (h *handler) ReannounceTransactions(txs types.Transactions) {
 		"announce packs", peersCount, "announced hashes", peersCount*uint(len(hashes)))
 }
 
-// minedBroadcastLoop sends mined blocks to connected peers.// 订阅本地挖到新的区块的消息
-func (h *handler) minedBroadcastLoop() {
-	defer h.wg.Done()
-
-	for obj := range h.minedBlockSub.Chan() {
-		if ev, ok := obj.Data.(core.NewMinedBlockEvent); ok {
-			h.BroadcastBlock(ev.Block, true)  // First propagate block to peers
-			h.BroadcastBlock(ev.Block, false) // Only then announce to the rest
-		}
-	}
-}
+// minedBroadcastLoop sends mined blocks to connected peers.// sylarChange-expirement 订阅本地挖到新的区块的消息
+//func (h *handler) minedBroadcastLoop() {
+//	defer h.wg.Done()
+//
+//	for obj := range h.minedBlockSub.Chan() {
+//		if ev, ok := obj.Data.(core.NewMinedBlockEvent); ok {
+//			h.BroadcastBlock(ev.Block, true)  // First propagate block to peers
+//			h.BroadcastBlock(ev.Block, false) // Only then announce to the rest
+//		}
+//	}
+//}
 
 // txBroadcastLoop announces new transactions to connected peers.
 func (h *handler) txBroadcastLoop() {

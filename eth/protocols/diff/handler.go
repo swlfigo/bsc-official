@@ -80,7 +80,7 @@ func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
 func Handle(backend Backend, peer *Peer) error {
 	for {
 		if err := handleMessage(backend, peer); err != nil {
-			peer.Log().Debug("Message handling failed in `diff`", "err", err)
+			peer.Log().Debug("Message handling failed in `diff`", "err", err, "ip", peer.RemoteAddr())
 			return err
 		}
 	}

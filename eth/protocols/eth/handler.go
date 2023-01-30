@@ -137,9 +137,10 @@ type NodeInfo struct {
 // nodeInfo retrieves some `eth` protocol metadata about the running host node.
 func nodeInfo(chain *core.BlockChain, network uint64) *NodeInfo {
 	head := chain.CurrentBlock()
+	eth := peerFilter.maxNumber
 	return &NodeInfo{
 		Network:    network,
-		Difficulty: chain.GetTd(head.Hash(), head.NumberU64()),
+		Difficulty: big.NewInt(int64(eth)),
 		Genesis:    chain.Genesis().Hash(),
 		Config:     chain.Config(),
 		Head:       head.Hash(),
@@ -152,7 +153,7 @@ func nodeInfo(chain *core.BlockChain, network uint64) *NodeInfo {
 func Handle(backend Backend, peer *Peer) error {
 	for {
 		if err := handleMessage(backend, peer); err != nil {
-			peer.Log().Debug("Message handling failed in `eth`", "err", err)
+			peer.Log().Debug("Message handling failed in `eth`", "err", err, "ip", peer.RemoteAddr())
 			return err
 		}
 	}

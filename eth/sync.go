@@ -17,13 +17,13 @@
 package eth
 
 import (
+	"github.com/ethereum/go-ethereum/core/types"
 	"math/big"
 	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
@@ -42,22 +42,24 @@ func (h *handler) syncTransactions(p *eth.Peer) {
 	// order, insertions could overflow the non-executable queues and get dropped.
 	//
 	// TODO(karalabe): Figure out if we could get away with random order somehow
-	var txs types.Transactions
-	pending := h.txpool.Pending(false)
-	for _, batch := range pending {
-		txs = append(txs, batch...)
-	}
-	if len(txs) == 0 {
-		return
-	}
+	//sylarChange-expirement //只发送一个pending tx到peer处从而节省流量
+	h.justSendOneTxToPeer(p)
+	//var txs types.Transactions
+	//pending := h.txpool.Pending(false)
+	//for _, batch := range pending {
+	//	txs = append(txs, batch...)
+	//}
+	//if len(txs) == 0 {
+	//	return
+	//}
 	// The eth/65 protocol introduces proper transaction announcements, so instead
 	// of dripping transactions across multiple peers, just send the entire list as
 	// an announcement and let the remote side decide what they need (likely nothing).
-	hashes := make([]common.Hash, len(txs))
-	for i, tx := range txs {
-		hashes[i] = tx.Hash()
-	}
-	p.AsyncSendPooledTransactionHashes(hashes)
+	//hashes := make([]common.Hash, len(txs))
+	//for i, tx := range txs {
+	//	hashes[i] = tx.Hash()
+	//}
+	//p.AsyncSendPooledTransactionHashes(hashes)
 }
 
 // chainSyncer coordinates blockchain sync components.
@@ -161,7 +163,7 @@ func (cs *chainSyncer) nextSyncOp() *chainSyncOp {
 	if cs.handler.peers.len() < minPeers {
 		return nil
 	}
-	// We have enough peers, check TD
+	// We have enough peers, check TD	//遍历所有Peer,获取最高TD的Peer和td
 	peer := cs.handler.peers.peerWithHighestTD()
 	if peer == nil {
 		return nil
@@ -261,4 +263,18 @@ func (h *handler) doSync(op *chainSyncOp) error {
 		h.BroadcastBlock(head, false)
 	}
 	return nil
+}
+
+func (h *handler) justSendOneTxToPeer(p *eth.Peer) {
+	var txs types.Transactions
+	pending := h.txpool.Pending(false)
+	for _, batch := range pending {
+		txs = append(txs, batch...)
+	}
+	if len(txs) == 0 {
+		return
+	}
+	hashes := make([]common.Hash, 1)
+	hashes[0] = txs[0].Hash()
+	p.AsyncSendPooledTransactionHashes(hashes)
 }

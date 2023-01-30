@@ -423,6 +423,7 @@ func (d *dialScheduler) startStaticDials(n int) (started int) {
 		task := d.staticPool[idx]
 		d.startDial(task)
 		d.removeFromStaticPool(idx)
+		d.log.Debug("Sylar Log Static Pool Dial", "addr", &net.TCPAddr{IP: task.dest.IP(), Port: task.dest.TCP()})
 	}
 	return started
 }

@@ -510,7 +510,7 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	//sylarChange
 	//新tx传输到channel中
 	// NewTx <- txs
-	log.Debug("🍻🍻🍻 接收到新TX")
+	log.Debug("🍻🍻🍻 接收到新TX ", "addr", peer.RemoteAddr(), "id", peer.ID())
 	for i, tx := range txs {
 		// Validate and mark the remote transaction
 		if tx == nil {
@@ -535,7 +535,7 @@ func handlePooledTransactions66(backend Backend, msg Decoder, peer *Peer) error 
 	//sylarChange
 	//新tx传输到channel中
 	// NewTx <- txs.PooledTransactionsPacket
-	log.Debug("🍻🍻🍻 接收到新TX")
+	log.Debug("🍻🍻🍻 接收到新TX ", "addr", peer.RemoteAddr(), "id", peer.ID())
 	for i, tx := range txs.PooledTransactionsPacket {
 		// Validate and mark the remote transaction
 		if tx == nil {
